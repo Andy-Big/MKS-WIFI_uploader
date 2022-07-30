@@ -14,6 +14,7 @@ uint8_t spi_eeprom[MARLIN_EEPROM_SIZE];
 
 void eeprom_test(void);
 
+
 void eeprom_init(void){
     DEBUG("Start EEPROM");
     W25QXX.init(SPI_EIGHTH_SPEED);
