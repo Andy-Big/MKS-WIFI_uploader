@@ -3,31 +3,36 @@
 
 
 
-SPI_HandleTypeDef	hFstSpi;
-DMA_HandleTypeDef	hTouchSpiDmaRx;
-DMA_HandleTypeDef	hTouchSpiDmaTx;
-uint8_t						touch_buff[TOUCH_BUFF_SIZE];
+FastSpi   			fstspi;
 
-DMA_HandleTypeDef	hFlashSpiDmaRx;
-DMA_HandleTypeDef	hFlashSpiDmaTx;
+bool						FastSpi::inited = false;
+fst_mode_t			FastSpi::current_mode = FST_MODE_UNKNOW;
 
 
 
-
-
-
-void		HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
+// SPI2 interrupt.
+extern "C" void SPI2_IRQHandler(void)
 {
-	if (hspi->Instance == hFstSpi.Instance)
-		_touch_CS_Disable();
+	HAL_SPI_IRQHandler(&fstspi.hFstSpi);
 }
-//==============================================================================
 
-
-
-
-void 		HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+// SPI2 RX DMA interrupt.
+extern "C" void DMA1_Stream3_IRQHandler(void)
 {
+  HAL_DMA_IRQHandler(&fstspi.hFstSpiDmaRx);
+}
+
+// SPI2 TX DMA interrupt.
+extern "C" void DMA1_Stream4_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&fstspi.hFstSpiDmaTx);
+}
+
+void 		HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+	while ((fstspi.GetFlags() & SPI_FLAG_BSY) || (fstspi.GetFlags() & SPI_FLAG_TXE) == 0 || fstspi.hFstSpi.State != HAL_SPI_STATE_READY);
+	while (fstspi.IsDMAReady() == 0);
+	_touch_CS_Disable();
 	_flash_CS_Disable();
 }
 
@@ -40,7 +45,12 @@ void 		HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 
 
 
-uint16_t	_fst_SPIGetFlags()
+
+
+
+
+
+uint16_t	FastSpi::GetFlags()
 {
 	return hFstSpi.Instance->SR;
 }
@@ -49,9 +59,11 @@ uint16_t	_fst_SPIGetFlags()
 
 
 
-void		FST_SPIInit(void)
+void		FastSpi::Init(void)
 {
-	
+	if (inited)
+		return;
+
 	GPIO_InitTypeDef GPIO_InitStruct = {0};
 	FST_SPI_CLK_ENABLE();
 
@@ -101,13 +113,15 @@ void		FST_SPIInit(void)
 	hFstSpi.Init.CRCPolynomial = 10;
 	FST_SPI_CLK_ENABLE();
 	HAL_SPI_Init(&hFstSpi);
+	
+	inited = true;
 }
 //==============================================================================
 
 
 
 
-HAL_SPI_StateTypeDef	FST_SPIGetState()
+HAL_SPI_StateTypeDef	FastSpi::GetState()
 {
 	return hFstSpi.State;
 }
@@ -118,7 +132,7 @@ HAL_SPI_StateTypeDef	FST_SPIGetState()
 
 // prescaler - SPI_BAUDRATEPRESCALER_2/4/8/16/32/64/128/256
 // APB2 clock is 84Mhz
-void		FST_SPISetSpeed(uint16_t prescaler)
+void		FastSpi::SetSpeed(uint16_t prescaler)
 {
 	// Clear baudrate bits
 	hFstSpi.Instance->CR1 &= ~(SPI_CR1_BR_2 | SPI_CR1_BR_1 | SPI_CR1_BR_0);
@@ -131,7 +145,7 @@ void		FST_SPISetSpeed(uint16_t prescaler)
 
 
 // return baudrate bits value - SPI_BAUDRATEPRESCALER_2/4/8/16/32/64/128/256
-uint16_t		FST_SPIGetSpeed()
+uint16_t		FastSpi::GetSpeed()
 {
 	return hFstSpi.Instance->CR1 & (SPI_CR1_BR_2 | SPI_CR1_BR_1 | SPI_CR1_BR_0);
 }
@@ -148,8 +162,16 @@ uint16_t		FST_SPIGetSpeed()
 
 
 
-void		TOUCH_SPIEnable()
+void		FastSpi::TouchEnable()
 {
+	if (!inited)
+		Init();
+	if (current_mode != FST_MODE_TOUCH)
+	{
+		while ((GetFlags() & SPI_FLAG_BSY) || (GetFlags() & SPI_FLAG_TXE) == 0 || hFstSpi.State != HAL_SPI_STATE_READY);
+		while ( IsDMAReady() == 0);
+		FlashDisable();
+	}
 	// DMA
 	FST_SPI_DMA_CLK_ENABLE();
 
@@ -169,31 +191,31 @@ void		TOUCH_SPIEnable()
 	FST_SPI_CLK_ENABLE();
 	HAL_SPI_Init(&hFstSpi);
 
-	hTouchSpiDmaRx.Instance = FST_SPI_DMA_STREAM1;
-	hTouchSpiDmaRx.Init.Channel = FST_SPI_DMA_CHANNEL1;
-	hTouchSpiDmaRx.Init.Direction = DMA_PERIPH_TO_MEMORY;
-	hTouchSpiDmaRx.Init.PeriphInc = DMA_PINC_DISABLE;
-	hTouchSpiDmaRx.Init.MemInc = DMA_MINC_ENABLE;
-	hTouchSpiDmaRx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-	hTouchSpiDmaRx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-	hTouchSpiDmaRx.Init.Mode = DMA_NORMAL;
-	hTouchSpiDmaRx.Init.Priority = DMA_PRIORITY_LOW;
-	hTouchSpiDmaRx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
-	HAL_DMA_Init(&hTouchSpiDmaRx);   
-	__HAL_LINKDMA(&hFstSpi, hFstSpi.hdmarx, hTouchSpiDmaRx);
+	hFstSpiDmaRx.Instance = FST_SPI_DMA_STREAM1;
+	hFstSpiDmaRx.Init.Channel = FST_SPI_DMA_CHANNEL1;
+	hFstSpiDmaRx.Init.Direction = DMA_PERIPH_TO_MEMORY;
+	hFstSpiDmaRx.Init.PeriphInc = DMA_PINC_DISABLE;
+	hFstSpiDmaRx.Init.MemInc = DMA_MINC_ENABLE;
+	hFstSpiDmaRx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+	hFstSpiDmaRx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+	hFstSpiDmaRx.Init.Mode = DMA_NORMAL;
+	hFstSpiDmaRx.Init.Priority = DMA_PRIORITY_LOW;
+	hFstSpiDmaRx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+	HAL_DMA_Init(&hFstSpiDmaRx);   
+	__HAL_LINKDMA(&hFstSpi, hdmarx, hFstSpiDmaRx);
 
-	hTouchSpiDmaTx.Instance = FST_SPI_DMA_STREAM2;
-	hTouchSpiDmaTx.Init.Channel = FST_SPI_DMA_CHANNEL2;
-	hTouchSpiDmaTx.Init.Direction = DMA_MEMORY_TO_PERIPH;
-	hTouchSpiDmaTx.Init.PeriphInc = DMA_PINC_DISABLE;
-	hTouchSpiDmaTx.Init.MemInc = DMA_MINC_ENABLE;
-	hTouchSpiDmaTx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-	hTouchSpiDmaTx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-	hTouchSpiDmaTx.Init.Mode = DMA_NORMAL;
-	hTouchSpiDmaTx.Init.Priority = DMA_PRIORITY_LOW;
-	hTouchSpiDmaTx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
-	HAL_DMA_Init(&hTouchSpiDmaTx);
-	__HAL_LINKDMA(&hFstSpi, hFstSpi.hdmatx, hTouchSpiDmaTx);
+	hFstSpiDmaTx.Instance = FST_SPI_DMA_STREAM2;
+	hFstSpiDmaTx.Init.Channel = FST_SPI_DMA_CHANNEL2;
+	hFstSpiDmaTx.Init.Direction = DMA_MEMORY_TO_PERIPH;
+	hFstSpiDmaTx.Init.PeriphInc = DMA_PINC_DISABLE;
+	hFstSpiDmaTx.Init.MemInc = DMA_MINC_ENABLE;
+	hFstSpiDmaTx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+	hFstSpiDmaTx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+	hFstSpiDmaTx.Init.Mode = DMA_NORMAL;
+	hFstSpiDmaTx.Init.Priority = DMA_PRIORITY_LOW;
+	hFstSpiDmaTx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+	HAL_DMA_Init(&hFstSpiDmaTx);
+	__HAL_LINKDMA(&hFstSpi, hdmatx, hFstSpiDmaTx);
 
 	// DMA interrupt init
 	// DMA1_Stream3_IRQn interrupt configuration
@@ -205,16 +227,22 @@ void		TOUCH_SPIEnable()
 	HAL_NVIC_EnableIRQ(FST_SPI_DMA_STREAM2_IRQ);
 
 	hFstSpi.Instance->CR1 |= SPI_CR1_SPE;
+
+	current_mode = FST_MODE_TOUCH;
 }
 //==============================================================================
 
 
 
 
-void		TOUCH_SPIDisable()
+void		FastSpi::TouchDisable()
 {
-	HAL_SPI_Abort(hFstSpi.Instance);
-	hFstSpi.Instance->CR1 &= ~SPI_CR1_SPE;
+	if (current_mode != FST_MODE_TOUCH)
+		return;
+	while ((GetFlags() & SPI_FLAG_BSY) || (GetFlags() & SPI_FLAG_TXE) == 0 || hFstSpi.State != HAL_SPI_STATE_READY);
+	while ( IsDMAReady() == 0);
+	_touch_CS_Disable();
+
 	HAL_DMA_DeInit(hFstSpi.hdmarx);
 	HAL_DMA_DeInit(hFstSpi.hdmatx);
 }
@@ -223,8 +251,14 @@ void		TOUCH_SPIDisable()
 
 
 
-void		TOUCH_SPIStartRead()
+void		FastSpi::TouchStartRead()
 {
+	if (((GetFlags() & SPI_FLAG_BSY) || (GetFlags() & SPI_FLAG_TXE) == 0 || hFstSpi.State != HAL_SPI_STATE_READY) ||  IsDMAReady() == 0)
+		return;
+	if (current_mode != FST_MODE_TOUCH)
+	{
+		 TouchEnable();
+	}
 	_touch_CS_Enable();
 	memset(touch_buff, 0, TOUCH_BUFF_SIZE);
 	
@@ -253,8 +287,16 @@ void		TOUCH_SPIStartRead()
 
 
 
-void		FLASH_SPIEnable()
+void		FastSpi::FlashEnable()
 {
+	if (!inited)
+		Init();
+	if (current_mode != FST_MODE_FLASH)
+	{
+		while ((GetFlags() & SPI_FLAG_BSY) || (GetFlags() & SPI_FLAG_TXE) == 0 || hFstSpi.State != HAL_SPI_STATE_READY);
+		while ( IsDMAReady() == 0);
+		TouchDisable();
+	}
 	// Prepare SPI for Flash
 	hFstSpi.Instance = FST_SPI;
 	hFstSpi.Init.Mode = SPI_MODE_MASTER;
@@ -275,32 +317,32 @@ void		FLASH_SPIEnable()
 	FST_SPI_DMA_CLK_ENABLE();
 	
 	// SPI1_RX Init
-	hFlashSpiDmaRx.Instance = FST_SPI_DMA_STREAM1;
-	hFlashSpiDmaRx.Init.Channel = FST_SPI_DMA_CHANNEL1;
-	hFlashSpiDmaRx.Init.Direction = DMA_PERIPH_TO_MEMORY;
-	hFlashSpiDmaRx.Init.PeriphInc = DMA_PINC_DISABLE;
-	hFlashSpiDmaRx.Init.MemInc = DMA_MINC_ENABLE;
-	hFlashSpiDmaRx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-	hFlashSpiDmaRx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-	hFlashSpiDmaRx.Init.Mode = DMA_NORMAL;
-	hFlashSpiDmaRx.Init.Priority = DMA_PRIORITY_LOW;
-	hFlashSpiDmaRx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
-	HAL_DMA_Init(&hFlashSpiDmaRx);
-	__HAL_LINKDMA(&hFstSpi, hdmarx, hFlashSpiDmaRx);
+	hFstSpiDmaRx.Instance = FST_SPI_DMA_STREAM1;
+	hFstSpiDmaRx.Init.Channel = FST_SPI_DMA_CHANNEL1;
+	hFstSpiDmaRx.Init.Direction = DMA_PERIPH_TO_MEMORY;
+	hFstSpiDmaRx.Init.PeriphInc = DMA_PINC_DISABLE;
+	hFstSpiDmaRx.Init.MemInc = DMA_MINC_ENABLE;
+	hFstSpiDmaRx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+	hFstSpiDmaRx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+	hFstSpiDmaRx.Init.Mode = DMA_NORMAL;
+	hFstSpiDmaRx.Init.Priority = DMA_PRIORITY_LOW;
+	hFstSpiDmaRx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+	HAL_DMA_Init(&hFstSpiDmaRx);
+	__HAL_LINKDMA(&hFstSpi, hdmarx, hFstSpiDmaRx);
 
 	// SPI1_TX Init
-	hFlashSpiDmaTx.Instance = FST_SPI_DMA_STREAM2;
-	hFlashSpiDmaTx.Init.Channel = FST_SPI_DMA_CHANNEL2;
-	hFlashSpiDmaTx.Init.Direction = DMA_MEMORY_TO_PERIPH;
-	hFlashSpiDmaTx.Init.PeriphInc = DMA_PINC_DISABLE;
-	hFlashSpiDmaTx.Init.MemInc = DMA_MINC_ENABLE;
-	hFlashSpiDmaTx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-	hFlashSpiDmaTx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-	hFlashSpiDmaTx.Init.Mode = DMA_NORMAL;
-	hFlashSpiDmaTx.Init.Priority = DMA_PRIORITY_LOW;
-	hFlashSpiDmaTx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
-	HAL_DMA_Init(&hFlashSpiDmaTx);
-	__HAL_LINKDMA(&hFstSpi, hFstSpi.hdmatx, hFlashSpiDmaTx);
+	hFstSpiDmaTx.Instance = FST_SPI_DMA_STREAM2;
+	hFstSpiDmaTx.Init.Channel = FST_SPI_DMA_CHANNEL2;
+	hFstSpiDmaTx.Init.Direction = DMA_MEMORY_TO_PERIPH;
+	hFstSpiDmaTx.Init.PeriphInc = DMA_PINC_DISABLE;
+	hFstSpiDmaTx.Init.MemInc = DMA_MINC_ENABLE;
+	hFstSpiDmaTx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+	hFstSpiDmaTx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+	hFstSpiDmaTx.Init.Mode = DMA_NORMAL;
+	hFstSpiDmaTx.Init.Priority = DMA_PRIORITY_LOW;
+	hFstSpiDmaTx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+	HAL_DMA_Init(&hFstSpiDmaTx);
+	__HAL_LINKDMA(&hFstSpi, hdmatx, hFstSpiDmaTx);
 
 	// DMA interrupt init
 	// DMA2_Stream2_IRQn interrupt configuration
@@ -311,38 +353,46 @@ void		FLASH_SPIEnable()
 	HAL_NVIC_EnableIRQ(FST_SPI_DMA_STREAM2_IRQ);
 
 	hFstSpi.Instance->CR1 |= SPI_CR1_SPE;
+	current_mode = FST_MODE_FLASH;
 }
 //==============================================================================
 
 
 
 
-void		FLASH_SPIDisable()
+void		FastSpi::FlashDisable()
 {
-	HAL_SPI_Abort(hFstSpi.Instance);
-	hFlashSpi.Instance->CR1 &= ~SPI_CR1_SPE;
+	if (current_mode != FST_MODE_FLASH)
+		return;
+	while ((GetFlags() & SPI_FLAG_BSY) || (GetFlags() & SPI_FLAG_TXE) == 0 || hFstSpi.State != HAL_SPI_STATE_READY);
+	while ( IsDMAReady() == 0);
 
 	/* SPI1 DMA DeInit */
-	HAL_DMA_DeInit(hFlashSpi.hdmarx);
-	HAL_DMA_DeInit(hFlashSpi.hdmatx);
+	HAL_DMA_DeInit(hFstSpi.hdmarx);
+	HAL_DMA_DeInit(hFstSpi.hdmatx);
 }
 //==============================================================================
 
 
 
 
-uint8_t		FLASH_SPIWriteReadByte(uint8_t txval)
+uint8_t		FastSpi::FlashWriteReadByte(uint8_t txval)
 {
+	if (current_mode != FST_MODE_FLASH)
+	{
+		 FlashEnable();
+	}
+
 	uint16_t res = 0;
 
-	while ((_fst_SPIGetFlags() & SPI_FLAG_BSY) || (_flash_SPIGetFlags() & SPI_FLAG_TXE) == 0);
+	while ((GetFlags() & SPI_FLAG_BSY) || (GetFlags() & SPI_FLAG_TXE) == 0);
 	hFstSpi.Instance->DR = txval;
-	while ((_fst_SPIGetFlags() & SPI_FLAG_RXNE) ==  0);
+	while ((GetFlags() & SPI_FLAG_RXNE) ==  0);
 	res = hFstSpi.Instance->DR;
 /*
-	while ((_flash_SPIGetFlags() & SPI_FLAG_BSY) || !(_flash_SPIGetFlags() & SPI_FLAG_TXE));
+	while ((_flashGetFlags() & SPI_FLAG_BSY) || !(_flashGetFlags() & SPI_FLAG_TXE));
 	hFstSpi.Instance->DR = txval;
-	while ((_flash_SPIGetFlags() & SPI_FLAG_RXNE) ==  0);
+	while ((_flashGetFlags() & SPI_FLAG_RXNE) ==  0);
 	res = hFstSpi.Instance->DR;
 */
 	return (uint8_t)res;
@@ -352,17 +402,22 @@ uint8_t		FLASH_SPIWriteReadByte(uint8_t txval)
 
 
 
-void		FLASH_SPIReadBuff(uint32_t dlen, uint8_t *dbuff)
+void		FastSpi::FlashReadBuff(uint32_t dlen, uint8_t *dbuff)
 {
+	if (current_mode != FST_MODE_FLASH)
+	{
+		 FlashEnable();
+	}
+
 	uint32_t	rlen = 0;
 	uint8_t		*rbuff = dbuff;
 
-	while ((_fst_SPIGetFlags() & SPI_FLAG_BSY) || !(_fst_SPIGetFlags() & SPI_FLAG_TXE));
+	while ((GetFlags() & SPI_FLAG_BSY) || !(GetFlags() & SPI_FLAG_TXE));
 	*rbuff = hFstSpi.Instance->DR & 0x00FF;
 	while (rlen < dlen)
 	{
 		hFstSpi.Instance->DR = 0;
-		while (!(_fst_SPIGetFlags() & SPI_FLAG_RXNE));
+		while (!(GetFlags() & SPI_FLAG_RXNE));
 		*rbuff = hFstSpi.Instance->DR & 0x00FF;
 		rbuff++;
 		rlen++;
@@ -375,17 +430,22 @@ void		FLASH_SPIReadBuff(uint32_t dlen, uint8_t *dbuff)
 
 
 
-void		FLASH_SPIWriteBuff(uint32_t dlen, uint8_t *dbuff)
+void		FastSpi::FlashWriteBuff(uint32_t dlen, uint8_t *dbuff)
 {
+	if (current_mode != FST_MODE_FLASH)
+	{
+		 FlashEnable();
+	}
+
 	uint32_t	rlen = 0;
 	uint8_t		*rbuff = dbuff;
 
-	while ((_fst_SPIGetFlags() & SPI_FLAG_BSY) || !(_fst_SPIGetFlags() & SPI_FLAG_TXE));
+	while ((GetFlags() & SPI_FLAG_BSY) || !(GetFlags() & SPI_FLAG_TXE));
 	*rbuff = hFstSpi.Instance->DR & 0x00FF;
 	while (rlen < dlen)
 	{
 		hFstSpi.Instance->DR = *rbuff;
-		while (!(_fst_SPIGetFlags() & SPI_FLAG_TXE));
+		while (!(GetFlags() & SPI_FLAG_TXE));
 		rbuff++;
 		rlen++;
 	}
@@ -397,9 +457,14 @@ void		FLASH_SPIWriteBuff(uint32_t dlen, uint8_t *dbuff)
 
 
 
-void		FLASH_SPIReadBuffDMA(uint32_t dlen, uint8_t *dbuff)
+void		FastSpi::FlashReadBuffDMA(uint32_t dlen, uint8_t *dbuff)
 {
-	while ((_fst_SPIGetFlags() & SPI_FLAG_BSY) || (_fst_SPIGetFlags() & SPI_FLAG_TXE) == 0 || hFstSpi.State != HAL_SPI_STATE_READY);
+	if (current_mode != FST_MODE_FLASH)
+	{
+		 FlashEnable();
+	}
+
+	while ((GetFlags() & SPI_FLAG_BSY) || (GetFlags() & SPI_FLAG_TXE) == 0 || hFstSpi.State != HAL_SPI_STATE_READY);
 	HAL_SPI_Receive_DMA(&hFstSpi, dbuff, dlen);
 	while (hFstSpi.State != HAL_SPI_STATE_READY);
 	return;
@@ -409,24 +474,20 @@ void		FLASH_SPIReadBuffDMA(uint32_t dlen, uint8_t *dbuff)
 
 
 
-void		FLASH_SPIWriteBuffDMA(uint32_t dlen, uint8_t *dbuff)
+void		FastSpi::FlashWriteBuffDMA(uint32_t dlen, uint8_t *dbuff)
 {
-	while ((_fst_SPIGetFlags() & SPI_FLAG_BSY) || (_fst_SPIGetFlags() & SPI_FLAG_TXE) == 0 || hFstSpi.State != HAL_SPI_STATE_READY);
+	if (current_mode != FST_MODE_FLASH)
+	{
+		 FlashEnable();
+	}
+
+	while ((GetFlags() & SPI_FLAG_BSY) || (GetFlags() & SPI_FLAG_TXE) == 0 || hFstSpi.State != HAL_SPI_STATE_READY);
 	HAL_SPI_Transmit_DMA(&hFstSpi, dbuff, dlen);
 //	while (hFstSpi.State != HAL_SPI_STATE_READY);
 	return;
 }
 //==============================================================================
 
-
-
-/*
-inline uint8_t		FLASH_IsDMAReady()
-{
-	return (hFstSpi.State == HAL_SPI_STATE_READY);
-}
-//==============================================================================
-*/
 
 
 

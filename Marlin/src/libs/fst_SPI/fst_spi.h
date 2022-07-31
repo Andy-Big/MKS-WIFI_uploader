@@ -5,6 +5,9 @@
 #include "../../../src/MarlinCore.h"
 
 
+#ifdef USE_HAL_SPI_REGISTER_CALLBACKS
+  #undef USE_HAL_SPI_REGISTER_CALLBACKS
+#endif
 #define USE_HAL_SPI_REGISTER_CALLBACKS	1U
 
 #define FST_SPI					          SPI2
@@ -47,36 +50,54 @@
 #define 	_flash_CS_Disable()	FST_SPI_CS_FLASH_GPIO->BSRR = FST_SPI_CS_FLASH_Pin
 
 
-extern SPI_HandleTypeDef		hFstSpi;
+typedef enum
+{
+  FST_MODE_TOUCH = 0,
+  FST_MODE_FLASH,
+  FST_MODE_UNKNOW,
+} fst_mode_t;
 
-void      HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi);
-
-
-uint16_t	_fst_SPIGetFlags();
-
-void		  FST_SPIInit(void);
-HAL_SPI_StateTypeDef	FST_SPIGetState();
-void		  FST_SPISetSpeed(uint16_t prescaler);
-uint16_t	FST_SPIGetSpeed();
-
-void		  TOUCH_SPIEnable();
-void		  TOUCH_SPIDisable();
-void		  TOUCH_SPIStartRead();
+void      HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi);
 
 
+class FastSpi
+{
 
-void		  FLASH_SPIEnable();
-void		  FLASH_SPIDisable();
-
-uint8_t		FLASH_SPIWriteReadByte(uint8_t txval);
-void		  FLASH_SPIReadBuff(uint32_t dlen, uint8_t *dbuff);
-void		  FLASH_SPIWriteBuff(uint32_t dlen, uint8_t *dbuff);
-void		  FLASH_SPIReadBuffDMA(uint32_t dlen, uint8_t *dbuff);
-void		  FLASH_SPIWriteBuffDMA(uint32_t dlen, uint8_t *dbuff);
-inline uint8_t		FLASH_IsDMAReady() { return (hFstSpi.State == HAL_SPI_STATE_READY); }
+  private:
+    uint8_t						  touch_buff[TOUCH_BUFF_SIZE];
+    static fst_mode_t		current_mode;
+    static bool         inited;
 
 
 
+  public:
+    DMA_HandleTypeDef	  hFstSpiDmaRx;
+    DMA_HandleTypeDef	  hFstSpiDmaTx;
+    SPI_HandleTypeDef		hFstSpi;
+    uint16_t	    GetFlags();
+    void		      Init(void);
+    HAL_SPI_StateTypeDef	GetState();
+    void		      SetSpeed(uint16_t prescaler);
+    uint16_t	    GetSpeed();
+    inline uint8_t		IsDMAReady() { return (hFstSpi.State == HAL_SPI_STATE_READY); }
+
+    void		      TouchEnable();
+    void		      TouchDisable();
+    void		      TouchStartRead();
+
+
+
+    void		      FlashEnable();
+    void		      FlashDisable();
+
+    uint8_t		    FlashWriteReadByte(uint8_t txval);
+    void		      FlashReadBuff(uint32_t dlen, uint8_t *dbuff);
+    void		      FlashWriteBuff(uint32_t dlen, uint8_t *dbuff);
+    void		      FlashReadBuffDMA(uint32_t dlen, uint8_t *dbuff);
+    void		      FlashWriteBuffDMA(uint32_t dlen, uint8_t *dbuff);
+};
+
+extern FastSpi   fstspi;
 
 #endif /*__fst_spi_H */
 

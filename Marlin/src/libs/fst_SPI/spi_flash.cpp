@@ -1,23 +1,17 @@
 #include "spi_flash.h"
-#include "gpio.h"
 
 
-extern			SPI_HandleTypeDef	hFlashSpi;
+#include "spi_flash.h"
 
-uint8_t			sectorbuff[4096];
-SPIFL_INFO		_spifl_info = {0, 0};
 
-uint32_t		_spifl_bust_counts;
+W25Q_storage	spiflash;
+
+extern			SPI_HandleTypeDef	hFstSpi;
+
 volatile uint32_t		d = 0;
 
 
 
-static inline void		___spifl_wait_cs()
-{
-	volatile uint8_t i = 100;
-	while (i)
-		i--;
-}
 
 
 
@@ -25,29 +19,29 @@ static inline void		___spifl_wait_cs()
 
 
 
-uint32_t		_spifl_ReadStatus()
+uint32_t		W25Q_storage::_ReadStatus()
 {
 	uint32_t	retval = 0;
 	uint16_t	rxval = 0;
 
-	___spifl_wait_cs();
+	_wait_cs();
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_STATUS1READ_CMD);
-	rxval = FLASH_SPIWriteReadByte(0);
+	fstspi.FlashWriteReadByte(W25Q_STATUS1READ_CMD);
+	rxval = fstspi.FlashWriteReadByte(0);
 	_flash_CS_Disable();
 	retval = rxval;
 
-	___spifl_wait_cs();
+	_wait_cs();
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_STATUS2READ_CMD);
-	rxval = FLASH_SPIWriteReadByte(0);
+	fstspi.FlashWriteReadByte(W25Q_STATUS2READ_CMD);
+	rxval = fstspi.FlashWriteReadByte(0);
 	_flash_CS_Disable();
 	retval += (uint32_t)rxval << 8;
 	
-	___spifl_wait_cs();
+	_wait_cs();
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_STATUS3READ_CMD);
-	rxval = FLASH_SPIWriteReadByte(0);
+	fstspi.FlashWriteReadByte(W25Q_STATUS3READ_CMD);
+	rxval = fstspi.FlashWriteReadByte(0);
 	_flash_CS_Disable();
 	retval += (uint32_t)rxval << 16;
 
@@ -58,29 +52,29 @@ uint32_t		_spifl_ReadStatus()
 
 
 
-void			_spifl_WriteStatus(uint32_t val)
+void			W25Q_storage::_WriteStatus(uint32_t val)
 {
 	uint16_t	txval = 0;
 
-	___spifl_wait_cs();
+	_wait_cs();
 	txval = val & 0xFF;
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_STATUS1WRITE_CMD);
-	FLASH_SPIWriteReadByte(txval);
+	fstspi.FlashWriteReadByte(W25Q_STATUS1WRITE_CMD);
+	fstspi.FlashWriteReadByte(txval);
 	_flash_CS_Disable();
 	txval = (val >> 8) & 0xFF;
 
-	___spifl_wait_cs();
+	_wait_cs();
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_STATUS2WRITE_CMD);
-	FLASH_SPIWriteReadByte(txval);
+	fstspi.FlashWriteReadByte(W25Q_STATUS2WRITE_CMD);
+	fstspi.FlashWriteReadByte(txval);
 	_flash_CS_Disable();
 	txval = (val >> 16) & 0xFF;
 
-	___spifl_wait_cs();
+	_wait_cs();
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_STATUS3WRITE_CMD);
-	FLASH_SPIWriteReadByte(txval);
+	fstspi.FlashWriteReadByte(W25Q_STATUS3WRITE_CMD);
+	fstspi.FlashWriteReadByte(txval);
 	_flash_CS_Disable();
 
 	return;
@@ -90,21 +84,21 @@ void			_spifl_WriteStatus(uint32_t val)
 
 
 
-void		_spifl_WaitBusy()
+void			W25Q_storage::_WaitBusy()
 {
 	uint16_t	rxval = 0;
-	_spifl_bust_counts = 0;
+	_bust_counts = 0;
 	
-	while ((_flash_SPIGetFlags() & SPI_FLAG_BSY) || (_flash_SPIGetFlags() & SPI_FLAG_TXE) == 0 || hFlashSpi.State != HAL_SPI_STATE_READY);
-	___spifl_wait_cs();
+	while ((fstspi.GetFlags() & SPI_FLAG_BSY) || (fstspi.GetFlags() & SPI_FLAG_TXE) == 0 || fstspi.hFstSpi.State != HAL_SPI_STATE_READY);
+	_wait_cs();
 
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_STATUS1READ_CMD);
-	rxval = FLASH_SPIWriteReadByte(0);
+	fstspi.FlashWriteReadByte(W25Q_STATUS1READ_CMD);
+	rxval = fstspi.FlashWriteReadByte(0);
 	while (rxval & W25Q_FLAG_BUSY)
 	{
 		d++;
-		rxval = FLASH_SPIWriteReadByte(0);
+		rxval = fstspi.FlashWriteReadByte(0);
 	};
 	_flash_CS_Disable();
 
@@ -115,14 +109,14 @@ void		_spifl_WaitBusy()
 
 
 
-void			_spifl_WriteEnable()
+void			W25Q_storage::W25Q_storage::_WriteEnable()
 {
-	while ((_flash_SPIGetFlags() & SPI_FLAG_BSY) || (_flash_SPIGetFlags() & SPI_FLAG_TXE) == 0 || hFlashSpi.State != HAL_SPI_STATE_READY);
-	_spifl_WaitBusy();
-	___spifl_wait_cs();
+	while ((fstspi.GetFlags() & SPI_FLAG_BSY) || (fstspi.GetFlags() & SPI_FLAG_TXE) == 0 || fstspi.hFstSpi.State != HAL_SPI_STATE_READY);
+	_WaitBusy();
+	_wait_cs();
 
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_WRITEENABLE_CMD);
+	fstspi.FlashWriteReadByte(W25Q_WRITEENABLE_CMD);
 	_flash_CS_Disable();
 	
 	return;
@@ -137,76 +131,82 @@ void			_spifl_WriteEnable()
 
 
 
-void		SPIFL_Init()
+void			W25Q_storage::Init()
 {
-	uint16_t f_id = SPIFL_ReadID();
+	fstspi.Init();
+	fstspi.FlashEnable();
+	uint32_t f_id = ReadID();
 	switch (f_id)
 	{
 		// w25q32
-		case 0xEF15:
-			_spifl_info.sectors_count = 1024;
-			_spifl_info.sector_size = 4096;
-			_spifl_info.page_size = 256;
+		case 0xEF4016:
+		// zb25vq32
+		case 0x5E4016:
+			_info.sectors_count = 1024;
+			_info.sector_size = 4096;
+			_info.page_size = 256;
 			break;
 			
 		// w25q64
-		case 0xEF16:
-			_spifl_info.sectors_count = 2048;
-			_spifl_info.sector_size = 4096;
-			_spifl_info.page_size = 256;
+		case 0xEF4017:
+		// zb25vq64
+		case 0x5E4017:
+			_info.sectors_count = 2048;
+			_info.sector_size = 4096;
+			_info.page_size = 256;
 			break;
 			
 		// w25q128
-		case 0xEF17:
-			_spifl_info.sectors_count = 4096;
-			_spifl_info.sector_size = 4096;
-			_spifl_info.page_size = 256;
+		case 0xEF4018:
+		// w25q128
+		case 0x5E4018:
+			_info.sectors_count = 4096;
+			_info.sector_size = 4096;
+			_info.page_size = 256;
 			break;
 			
 	}
-	___spifl_wait_cs();
+	_wait_cs();
 }
 //==============================================================================
 
 
 
 
-uint32_t		SPIFL_GetSectorSize()
+uint32_t		W25Q_storage::GetSectorSize()
 {
-	return _spifl_info.sector_size;
+	return _info.sector_size;
 }
 //==============================================================================
 
 
 
 
-uint32_t		SPIFL_GetSectorsCount()
+uint32_t		W25Q_storage::GetSectorsCount()
 {
-	return _spifl_info.sectors_count;
+	return _info.sectors_count;
 }
 //==============================================================================
 
 
 
 
-uint16_t		SPIFL_ReadID()
+uint32_t		W25Q_storage::ReadID()
 {
-	uint16_t	retval = 0;
-	uint16_t	rxval = 0;
+	uint32_t	retval = 0;
+	uint32_t	rxval = 0;
 
-	while ((_flash_SPIGetFlags() & SPI_FLAG_BSY) || (_flash_SPIGetFlags() & SPI_FLAG_TXE) == 0 || hFlashSpi.State != HAL_SPI_STATE_READY);
-	_spifl_WaitBusy();
-	___spifl_wait_cs();
+	while ((fstspi.GetFlags() & SPI_FLAG_BSY) || (fstspi.GetFlags() & SPI_FLAG_TXE) == 0 || fstspi.hFstSpi.State != HAL_SPI_STATE_READY);
+	_WaitBusy();
+	_wait_cs();
 
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_READID_CMD);
-	FLASH_SPIWriteReadByte(0);
-	FLASH_SPIWriteReadByte(0);
-	FLASH_SPIWriteReadByte(0);
-	rxval = FLASH_SPIWriteReadByte(0);
-	retval = rxval << 8;
-	rxval = FLASH_SPIWriteReadByte(0);
-	retval += rxval;
+	fstspi.FlashWriteReadByte(W25Q_READID_CMD);
+	retval = fstspi.FlashWriteReadByte(0);
+	retval <<= 8;
+	retval += fstspi.FlashWriteReadByte(0);
+	retval <<= 8;
+	retval += fstspi.FlashWriteReadByte(0);
 	
 	_flash_CS_Disable();
 
@@ -217,27 +217,27 @@ uint16_t		SPIFL_ReadID()
 
 
 
-void		SPIFL_ReadBuff(uint32_t addr, uint32_t dlen, uint8_t *dbuff)
+void				W25Q_storage::ReadBuff(uint32_t addr, uint32_t dlen, uint8_t *dbuff)
 {
 	if (dlen == 0 || dbuff == 0)
 		return;
 	
-	while ((_flash_SPIGetFlags() & SPI_FLAG_BSY) || (_flash_SPIGetFlags() & SPI_FLAG_TXE) == 0 || hFlashSpi.State != HAL_SPI_STATE_READY);
-	while (FLASH_IsDMAReady() == 0);
-	_spifl_WaitBusy();
-	___spifl_wait_cs();
+	while ((fstspi.GetFlags() & SPI_FLAG_BSY) || (fstspi.GetFlags() & SPI_FLAG_TXE) == 0 || fstspi.hFstSpi.State != HAL_SPI_STATE_READY);
+	while (fstspi.IsDMAReady() == 0);
+	_WaitBusy();
+	_wait_cs();
 
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_READDATA_CMD);
-	FLASH_SPIWriteReadByte((addr >> 16) & 0xFF);
-	FLASH_SPIWriteReadByte((addr >> 8) & 0xFF);
-	FLASH_SPIWriteReadByte(addr & 0xFF);
+	fstspi.FlashWriteReadByte(W25Q_READDATA_CMD);
+	fstspi.FlashWriteReadByte((addr >> 16) & 0xFF);
+	fstspi.FlashWriteReadByte((addr >> 8) & 0xFF);
+	fstspi.FlashWriteReadByte(addr & 0xFF);
 
 	// DMA is not allowed with CCM SRAM (at address 0x10000000)
 	if (dlen > 48 && ((uint32_t)dbuff & 0xFF000000) != 0x10000000)
-		FLASH_SPIReadBuffDMA(dlen, dbuff);
+		fstspi.FlashReadBuffDMA(dlen, dbuff);
 	else
-		FLASH_SPIReadBuff(dlen, dbuff);
+		fstspi.FlashReadBuff(dlen, dbuff);
 		
 	_flash_CS_Disable();
 
@@ -248,22 +248,22 @@ void		SPIFL_ReadBuff(uint32_t addr, uint32_t dlen, uint8_t *dbuff)
 
 
 
-void		SPIFL_ReadBuffDMA(uint32_t addr, uint32_t dlen, uint8_t *dbuff)
+void				W25Q_storage::ReadBuffDMA(uint32_t addr, uint32_t dlen, uint8_t *dbuff)
 {
 	if (dlen == 0 || dbuff == 0)
 		return;
 	
-	while ((_flash_SPIGetFlags() & SPI_FLAG_BSY) || (_flash_SPIGetFlags() & SPI_FLAG_TXE) == 0 || hFlashSpi.State != HAL_SPI_STATE_READY);
-	_spifl_WaitBusy();
-	___spifl_wait_cs();
+	while ((fstspi.GetFlags() & SPI_FLAG_BSY) || (fstspi.GetFlags() & SPI_FLAG_TXE) == 0 || fstspi.hFstSpi.State != HAL_SPI_STATE_READY);
+	_WaitBusy();
+	_wait_cs();
 
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_READDATA_CMD);
-	FLASH_SPIWriteReadByte((addr >> 16) & 0xFF);
-	FLASH_SPIWriteReadByte((addr >> 8) & 0xFF);
-	FLASH_SPIWriteReadByte(addr & 0xFF);
+	fstspi.FlashWriteReadByte(W25Q_READDATA_CMD);
+	fstspi.FlashWriteReadByte((addr >> 16) & 0xFF);
+	fstspi.FlashWriteReadByte((addr >> 8) & 0xFF);
+	fstspi.FlashWriteReadByte(addr & 0xFF);
 
-	FLASH_SPIReadBuffDMA(dlen, dbuff);
+	fstspi.FlashReadBuffDMA(dlen, dbuff);
 		
 	_flash_CS_Disable();
 
@@ -274,19 +274,19 @@ void		SPIFL_ReadBuffDMA(uint32_t addr, uint32_t dlen, uint8_t *dbuff)
 
 
 // addr - address of a any byte in sector
-void			SPIFL_EraseSector(uint32_t addr)
+void				W25Q_storage::EraseSector(uint32_t addr)
 {
-	addr &= ~(_spifl_info.sector_size - 1);
+	addr &= ~(_info.sector_size - 1);
 	
-	while ((_flash_SPIGetFlags() & SPI_FLAG_BSY) || (_flash_SPIGetFlags() & SPI_FLAG_TXE) == 0 || hFlashSpi.State != HAL_SPI_STATE_READY);
-	_spifl_WriteEnable();	
-	___spifl_wait_cs();
+	while ((fstspi.GetFlags() & SPI_FLAG_BSY) || (fstspi.GetFlags() & SPI_FLAG_TXE) == 0 || fstspi.hFstSpi.State != HAL_SPI_STATE_READY);
+	_WriteEnable();	
+	_wait_cs();
 	
 	_flash_CS_Enable();
-	FLASH_SPIWriteReadByte(W25Q_ERASESECTOR_CMD);
-	FLASH_SPIWriteReadByte((addr >> 16) & 0xFF);
-	FLASH_SPIWriteReadByte((addr >> 8) & 0xFF);
-	FLASH_SPIWriteReadByte(addr & 0xFF);
+	fstspi.FlashWriteReadByte(W25Q_ERASESECTOR_CMD);
+	fstspi.FlashWriteReadByte((addr >> 16) & 0xFF);
+	fstspi.FlashWriteReadByte((addr >> 8) & 0xFF);
+	fstspi.FlashWriteReadByte(addr & 0xFF);
 	_flash_CS_Disable();
 }
 //==============================================================================
@@ -294,35 +294,35 @@ void			SPIFL_EraseSector(uint32_t addr)
 
 
 
-void		SPIFL_WriteBuff(uint32_t addr, uint32_t dlen, uint8_t *dbuff)
+void				W25Q_storage::WriteBuff(uint32_t addr, uint32_t dlen, uint8_t *dbuff)
 {
 	if (dlen == 0 || dbuff == 0)
 		return;
 
 	uint8_t		*buff = dbuff;
 	
-//	uint32_t	sector = addr & ~(_spifl_info.sector_size - 1);
+//	uint32_t	sector = addr & ~(_info.sector_size - 1);
 //	uint32_t	oldsector = sector;
 	// begin address in a sector
-	uint32_t	addrinsect = addr & (_spifl_info.sector_size - 1);
+	uint32_t	addrinsect = addr & (_info.sector_size - 1);
 	// begin address in a page
-	uint32_t	addrinpage = addr & (_spifl_info.page_size - 1);
+	uint32_t	addrinpage = addr & (_info.page_size - 1);
 	
 	// remain data length in a sector
 	uint32_t	towritesect;
 	// remain data in a page
 	uint32_t	towritepage;
 	
-	while ((_flash_SPIGetFlags() & SPI_FLAG_BSY) || (_flash_SPIGetFlags() & SPI_FLAG_TXE) == 0 || hFlashSpi.State != HAL_SPI_STATE_READY);
-	_spifl_WaitBusy();
+	while ((fstspi.GetFlags() & SPI_FLAG_BSY) || (fstspi.GetFlags() & SPI_FLAG_TXE) == 0 || fstspi.hFstSpi.State != HAL_SPI_STATE_READY);
+	_WaitBusy();
 	
 	towritesect = dlen;
-	if ((towritesect + addrinsect) > _spifl_info.sector_size)
-		towritesect = _spifl_info.sector_size - addrinsect;
+	if ((towritesect + addrinsect) > _info.sector_size)
+		towritesect = _info.sector_size - addrinsect;
 	// remain data in a page
 	towritepage = towritesect;
-	if ((towritepage + addrinpage) > _spifl_info.page_size)
-		towritepage = _spifl_info.page_size - addrinpage;
+	if ((towritepage + addrinpage) > _info.page_size)
+		towritepage = _info.page_size - addrinpage;
 
 	addrinpage = 0;
 	addrinsect = 0;
@@ -330,24 +330,24 @@ void		SPIFL_WriteBuff(uint32_t addr, uint32_t dlen, uint8_t *dbuff)
 	while (dlen)
 	{
 		// sector erase
-		SPIFL_EraseSector(addr);
+		EraseSector(addr);
 		
 		while (towritesect)
 		{
-			_spifl_WaitBusy();
-			___spifl_wait_cs();
+			_WaitBusy();
+			_wait_cs();
 			
-			_spifl_WriteEnable();	
-			___spifl_wait_cs();
+			_WriteEnable();	
+			_wait_cs();
 
 			_flash_CS_Enable();
-			FLASH_SPIWriteReadByte(W25Q_PROGRAMPAGE_CMD);
-			FLASH_SPIWriteReadByte((addr >> 16) & 0xFF);
-			FLASH_SPIWriteReadByte((addr >> 8) & 0xFF);
-			FLASH_SPIWriteReadByte(addr & 0xFF);
+			fstspi.FlashWriteReadByte(W25Q_PROGRAMPAGE_CMD);
+			fstspi.FlashWriteReadByte((addr >> 16) & 0xFF);
+			fstspi.FlashWriteReadByte((addr >> 8) & 0xFF);
+			fstspi.FlashWriteReadByte(addr & 0xFF);
 			for (uint32_t i = 0; i < towritepage; i++)
 			{
-				FLASH_SPIWriteReadByte(*buff);
+				fstspi.FlashWriteReadByte(*buff);
 				buff++;
 			}
 			_flash_CS_Disable();
@@ -357,15 +357,15 @@ void		SPIFL_WriteBuff(uint32_t addr, uint32_t dlen, uint8_t *dbuff)
 			addr += towritepage;
 			// remain data in a page
 			towritepage = towritesect;
-			if (towritepage > _spifl_info.page_size)
-				towritepage = _spifl_info.page_size;
+			if (towritepage > _info.page_size)
+				towritepage = _info.page_size;
 		}
 		towritesect = dlen;
-		if (towritesect > _spifl_info.sector_size)
-			towritesect = _spifl_info.sector_size;
+		if (towritesect > _info.sector_size)
+			towritesect = _info.sector_size;
 		towritepage = towritesect;
-		if (towritepage > _spifl_info.page_size)
-			towritepage = _spifl_info.page_size;
+		if (towritepage > _info.page_size)
+			towritepage = _info.page_size;
 	}
 
 	return;

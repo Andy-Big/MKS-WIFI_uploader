@@ -58,6 +58,7 @@ void MarlinUI::tft_idle() {
     }
   #endif
 
+
   tft.queue.async();
   TERN_(TOUCH_SCREEN, touch.idle());
 }
